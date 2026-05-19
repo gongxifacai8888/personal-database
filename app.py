@@ -16,8 +16,147 @@ from db import (
     init_database, verify_password, has_password, set_password,
     get_skill_stats, get_academic_stats, get_resource_stats,
     get_materials_stats, get_achievements, get_recent_activities,
-    check_achievements, get_recent_material_contents
+    check_achievements, get_recent_material_contents,
+    get_skill_list, create_skill, create_academic, create_resource,
+    update_skill_progress
 )
+
+# 自动填充模拟数据（数据库为空时）
+def auto_seed_data():
+    """如果数据库为空，自动填充模拟数据"""
+    if get_skill_stats()['total'] > 0:
+        return  # 已有数据，跳过
+
+    # 技能
+    skills_data = [
+        ("Python数据分析", "编程开发", 100, "Pandas/NumPy/Matplotlib数据处理与分析", "P0", 68),
+        ("机器学习基础", "人工智能", 80, "监督学习/非监督学习/模型评估", "P0", 45),
+        ("SQL数据库", "数据技术", 90, "MySQL/PostgreSQL查询与优化", "P1", 55),
+        ("产品经理方法论", "产品管理", 70, "需求分析/PRD/用户研究/A/B测试", "P1", 38),
+        ("数据可视化", "数据分析", 85, "Plotly/ECharts/Tableau可视化设计", "P1", 50),
+        ("LaTeX排版", "学术工具", 50, "论文排版/Beamer演示", "P2", 10),
+        ("深度学习", "人工智能", 60, "CNN/RNN/Transformer/PyTorch", "P2", 25),
+        ("R语言统计", "数据技术", 40, "ggplot2/dplyr/统计分析", "P2", 18),
+        ("项目管理", "软技能", 75, "敏捷/Scrum/甘特图", "P3", 42),
+        ("自然语言处理", "人工智能", 35, "文本分类/NER/大语言模型", "P2", 15),
+        ("贝叶斯统计", "数学统计", 25, "先验分布/后验推断/MCMC", "P2", 15),
+        ("假设检验", "数学统计", 30, "t检验/卡方检验/非参数检验", "P2", 15),
+        ("两样本检验", "数学统计", 15, "独立样本/配对样本/方差分析", "P3", 15),
+        ("Python科学计算", "编程开发", 20, "SciPy/SymPy/数值计算", "P2", 15),
+        ("经济设计方法", "质量管理", 15, "Duncan模型/贝叶斯经济设计/控制图优化", "P2", 15),
+        ("Swift开发", "编程开发", 10, "iOS应用开发/SwiftUI", "P3", 5),
+        ("前端开发入门", "编程开发", 30, "HTML/CSS/JavaScript/React基础", "P3", 12),
+        ("运筹学", "数学优化", 45, "线性规划/整数规划/排队论", "P2", 30),
+    ]
+    for name, cat, target, notes, pri, prog in skills_data:
+        sid = create_skill(name, category=cat, target_level=target, notes=notes, priority=pri)
+        update_skill_progress(sid, prog)
+
+    # 学术文献
+    academics_data = [
+        {
+            "title": "Cost-Optimal Bayesian Control Chart Design for Process Monitoring",
+            "authors": "Lam Y., Zhang L.",
+            "keywords": "Bayesian, economic design, control chart, process monitoring",
+            "abstract": "This paper proposes a Bayesian approach to the economic design of control charts. Unlike traditional frequentist methods, the Bayesian framework incorporates prior information about process parameters and updates the monitoring strategy dynamically. The cost model considers sampling costs, false alarm costs, and out-of-control costs. Numerical examples demonstrate that the proposed Bayesian economic design achieves lower expected costs compared to Duncan's classical model, especially when process parameters are uncertain.",
+            "notes": "贝叶斯经济设计的经典文献，与毕业论文核心方法直接相关。",
+            "tags": "贝叶斯,经济设计,质量控制,核心文献",
+            "source": "Quality and Reliability Engineering International",
+            "publish_date": "2021-03-15"
+        },
+        {
+            "title": "A Deep Learning Approach for Anomaly Detection in Manufacturing Processes",
+            "authors": "Wang J., Li X., Chen Y.",
+            "keywords": "deep learning, anomaly detection, manufacturing, autoencoder",
+            "abstract": "We propose a deep learning-based anomaly detection framework for manufacturing process monitoring. The approach uses a variational autoencoder (VAE) to learn normal process patterns and detect deviations. Compared to traditional SPC methods, the proposed approach can capture complex nonlinear patterns and achieve higher detection rates with fewer false alarms.",
+            "notes": "深度学习在质量监控中的前沿应用，可以作为论文的未来展望部分引用。",
+            "tags": "深度学习,异常检测,制造过程",
+            "source": "Journal of Manufacturing Systems",
+            "publish_date": "2023-06-20"
+        },
+        {
+            "title": "Economic Design of X̄ Control Charts: A Review and Future Directions",
+            "authors": "Celano G., Castagliola P.",
+            "keywords": "economic design, X-bar chart, cost model, review",
+            "abstract": "This review paper summarizes the development of economic design of X-bar control charts since Duncan's seminal work in 1956. We categorize existing approaches into classical economic design, economic-statistical design, and Bayesian economic design. Key limitations of current models are identified. Future research directions include robust economic design and integration with machine learning methods.",
+            "notes": "经济设计综述论文，覆盖了从Duncan到贝叶斯方法的完整脉络。对论文第二章文献综述非常有帮助。",
+            "tags": "经济设计,综述,控制图,必读",
+            "source": "Quality Engineering",
+            "publish_date": "2022-09-10"
+        },
+        {
+            "title": "Large Language Models for Data Analysis: Capabilities and Limitations",
+            "authors": "Chen M., Liu J., Zhao W.",
+            "keywords": "LLM, data analysis, GPT, automated analysis",
+            "abstract": "This paper investigates the capabilities and limitations of large language models (LLMs) in automated data analysis tasks. Results show that while LLMs excel at result interpretation and natural language reporting, they struggle with complex multi-step reasoning and numerical computation. We propose a hybrid framework combining LLMs with traditional statistical tools.",
+            "notes": "LLM做数据分析的评估论文，和信管专业数据分析和AI方向都很相关。",
+            "tags": "大语言模型,数据分析,AI",
+            "source": "Proceedings of KDD 2024",
+            "publish_date": "2024-08-05"
+        },
+        {
+            "title": "Information Systems Success Model: An Update and Extension",
+            "authors": "DeLone W.H., McLean E.R.",
+            "keywords": "IS success model, system quality, information quality, service quality",
+            "abstract": "This paper updates and extends the DeLone and McLean Information Systems Success Model originally proposed in 1992. The updated model includes six interrelated dimensions of IS success: system quality, information quality, service quality, use, user satisfaction, and net benefits.",
+            "notes": "信息系统成功模型的经典更新版，信管专业必读。",
+            "tags": "信息系统,成功模型,经典文献",
+            "source": "Journal of Management Information Systems",
+            "publish_date": "2003-01-01"
+        },
+        {
+            "title": "Attention Is All You Need",
+            "authors": "Vaswani A., Shazeer N., Parmar N., et al.",
+            "keywords": "Transformer, attention mechanism, neural network, sequence modeling",
+            "abstract": "We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train.",
+            "notes": "Transformer的开山之作，深度学习和NLP方向的基础论文。",
+            "tags": "Transformer,注意力机制,NLP,必读",
+            "source": "NeurIPS 2017",
+            "publish_date": "2017-06-12"
+        },
+        {
+            "title": "Product Management in the AI Era: Challenges and Opportunities",
+            "authors": "Zhang R., Thompson K., Park S.",
+            "keywords": "product management, AI, agile, data-driven",
+            "abstract": "The emergence of AI-powered products creates new challenges and opportunities for product managers. We propose a framework called AI-Augmented Product Development (AAPD) that integrates traditional PM methodologies with AI-specific considerations.",
+            "notes": "AI时代产品管理的前沿论文，和产品经理方向高度相关。",
+            "tags": "产品经理,AI,敏捷开发",
+            "source": "Harvard Business Review (Digital)",
+            "publish_date": "2024-02-18"
+        },
+        {
+            "title": "A Survey on Bayesian Deep Learning for Quality Engineering",
+            "authors": "Liu H., Tan M., Zhou S.",
+            "keywords": "Bayesian deep learning, quality engineering, uncertainty quantification",
+            "abstract": "We survey recent advances in Bayesian deep learning and their applications in quality engineering. Bayesian neural networks provide a principled way to quantify model uncertainty. Applications in process monitoring, reliability analysis, and design optimization are discussed.",
+            "notes": "贝叶斯深度学习在质量工程中的综述，和毕业论文方向非常契合。",
+            "tags": "贝叶斯,深度学习,质量工程,综述",
+            "source": "IIE Transactions",
+            "publish_date": "2023-11-25"
+        },
+    ]
+    for a in academics_data:
+        create_academic(**a)
+
+    # 资源
+    resources_data = [
+        ("Pandas官方文档 - User Guide", "编程文档", "https://pandas.pydata.org/docs/user_guide/index.html", "Pandas数据处理的官方教程", "P0", "在看"),
+        ("Scikit-learn机器学习教程", "在线课程", "https://scikit-learn.org/stable/tutorial/index.html", "从基础分类到模型选择与评估的完整学习路径", "P1", "在看"),
+        ("《精益数据分析》", "产品书籍", "", "数据分析驱动产品决策的经典书籍", "P1", "待看"),
+        ("动手学深度学习 (d2l.ai)", "在线课程", "https://zh.d2l.ai/", "李沐团队，PyTorch版，含视频和可运行代码", "P1", "在看"),
+        ("SQLZoo - SQL在线练习", "在线工具", "https://sqlzoo.net/", "交互式SQL练习平台", "P1", "已看"),
+        ("《启示录：打造用户喜爱的产品》", "产品书籍", "", "产品经理圣经，Marty Cagan", "P1", "已看"),
+        ("Plotly Python图表库文档", "编程文档", "https://plotly.com/python/", "交互式图表库完整文档", "P2", "待看"),
+        ("LeetCode算法题库", "在线工具", "https://leetcode.cn/", "程序员面试必备算法练习平台", "P2", "在看"),
+        ("《质量控制与质量管理》教材", "课程教材", "", "含SPC控制图、工序能力分析、抽样检验", "P1", "已看"),
+        ("GitHub - 开源项目", "开发资源", "https://github.com/", "全球最大开源社区", "P2", "在看"),
+        ("Figma - 产品原型设计", "在线工具", "https://www.figma.com/", "产品经理必备UI设计和原型工具", "P3", "待看"),
+        ("贝叶斯统计入门视频 - StatQuest", "视频教程", "https://www.youtube.com/playlist?list=PLblh5JKOoLUJKCm3T02Nr6U0MIjF-4R4H", "用直觉方式讲解先验/后验/MCMC", "P2", "待看"),
+    ]
+    for title, cat, url, desc, pri, status in resources_data:
+        create_resource(title=title, category=cat, url=url, description=desc, priority=pri, status=status)
+
+auto_seed_data()
 
 # 导入页面模块
 from page_home import render_home_page
@@ -363,9 +502,9 @@ def render_login_page():
 
 # ============ AI 助手 ============
 
-DEEPSEEK_API_KEY = "sk-4a0043055d18427db3d5c67738858962"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 
 def get_ai_response(messages: list) -> str:
