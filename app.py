@@ -24,6 +24,7 @@ from db import (
 # 自动填充模拟数据（数据库为空时）
 def auto_seed_data():
     """如果数据库为空，自动填充模拟数据"""
+    init_database()  # 确保表已创建
     if get_skill_stats()['total'] > 0:
         return  # 已有数据，跳过
 

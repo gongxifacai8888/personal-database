@@ -19,6 +19,8 @@ LOCAL_DB_PATH = os.path.join(BASE_DIR, "personal_database.db")
 
 
 # ============ Turso HTTP API 客户端 ============
+import json as _json
+
 class TursoClient:
     """Turso HTTP API 客户端，模拟sqlite3接口"""
     
@@ -27,15 +29,6 @@ class TursoClient:
             url = "https://" + url[len("libsql://"):]
         self._url = url
         self._auth_token = auth_token
-        self._client = None
-    
-    def _get_client(self):
-        if self._client is None:
-            import libsql_client
-            self._client = libsql_client.create_client_sync(
-                url=self._url, auth_token=self._auth_token
-            )
-        return self._client
     
     def cursor(self):
         return TursoCursor(self)
@@ -44,23 +37,27 @@ class TursoClient:
         pass  # HTTP API自动提交
     
     def close(self):
-        if self._client:
-            try:
-                self._client.close()
-            except:
-                pass
-            self._client = None
+        pass
     
-    def execute(self, sql, params=None):
-        client = self._get_client()
+    def _execute_sql(self, sql, params=None):
+        """通过HTTP API执行SQL"""
+        import requests
+        stmts = [{"sql": sql}]
         if params:
-            result = client.execute(sql, params)
-        else:
-            result = client.execute(sql)
-        return result
-    
-    def sync(self):
-        pass  # HTTP模式不需要sync
+            stmts[0]["args"] = list(params)
+        resp = requests.post(
+            f"{self._url}/v2/pipeline",
+            headers={
+                "Authorization": f"Bearer {self._auth_token}",
+                "Content-Type": "application/json"
+            },
+            json={"requests": [{"type": "execute", "stmt": s} for s in stmts] + [{"type": "close"}]},
+            timeout=30
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results", [])
+        return results
 
 
 class TursoCursor:
@@ -68,50 +65,96 @@ class TursoCursor:
     
     def __init__(self, client: TursoClient):
         self._client = client
-        self._last_result = None
-        self._last_description = None
+        self._rows = []
+        self._columns = []
+        self._last_insert_rowid = None
+        self._rows_affected = 0
+        self._description = None
     
     def execute(self, sql, params=None):
-        result = self._client.execute(sql, params)
-        self._last_result = result
-        # 从结果构建description
-        if result and hasattr(result, 'columns') and result.columns:
-            self._last_description = [(col,) for col in result.columns]
-        else:
-            self._last_description = None
+        try:
+            results = self._client._execute_sql(sql, params)
+            if results and len(results) > 0:
+                result = results[0]
+                result_type = result.get("type")
+                if result_type == "ok":
+                    resp = result.get("response", {})
+                    exec_result = resp.get("result", {})
+                    
+                    # SELECT结果
+                    if "cols" in exec_result:
+                        self._columns = [c["name"] for c in exec_result["cols"]]
+                        self._description = [(c["name"],) for c in exec_result["cols"]]
+                        raw_rows = exec_result.get("rows", [])
+                        self._rows = []
+                        for raw_row in raw_rows:
+                            row_values = []
+                            for val in raw_row:
+                                if isinstance(val, dict) and "type" in val:
+                                    # Turso的值类型包装
+                                    vtype = val["type"]
+                                    if vtype == "null":
+                                        row_values.append(None)
+                                    elif vtype == "integer":
+                                        row_values.append(int(val["value"]))
+                                    elif vtype == "float":
+                                        row_values.append(float(val["value"]))
+                                    elif vtype == "text":
+                                        row_values.append(str(val["value"]))
+                                    elif vtype == "blob":
+                                        row_values.append(val["value"])
+                                    else:
+                                        row_values.append(val.get("value"))
+                                else:
+                                    row_values.append(val)
+                            # 转成字典
+                            self._rows.append(dict(zip(self._columns, row_values)))
+                    else:
+                        # INSERT/UPDATE/DELETE等
+                        self._rows = []
+                        self._columns = []
+                        self._description = None
+                        self._last_insert_rowid = exec_result.get("last_insert_rowid")
+                        self._rows_affected = exec_result.get("affected_row_count", 0)
+                elif result_type == "error":
+                    error_msg = result.get("response", {}).get("error", {}).get("message", "Unknown error")
+                    raise Exception(f"Turso SQL error: {error_msg}")
+            else:
+                self._rows = []
+                self._columns = []
+        except Exception as e:
+            if "Turso SQL error" in str(e):
+                raise
+            # 非SQL错误（网络等）
+            raise
         return self
     
     def executemany(self, sql, params_list):
-        client = self._client._get_client()
         for params in params_list:
-            client.execute(sql, params)
+            self.execute(sql, params)
         return self
     
     def fetchone(self):
-        if self._last_result and self._last_result.rows:
-            return self._last_result.rows[0]
+        if self._rows:
+            return self._rows.pop(0)
         return None
     
     def fetchall(self):
-        if self._last_result and self._last_result.rows:
-            return list(self._last_result.rows)
-        return []
+        rows = self._rows[:]
+        self._rows = []
+        return rows
     
     @property
     def description(self):
-        return self._last_description
+        return self._description
     
     @property
     def lastrowid(self):
-        if self._last_result and hasattr(self._last_result, 'last_insert_rowid'):
-            return self._last_result.last_insert_rowid
-        return None
+        return self._last_insert_rowid
     
     @property
     def rowcount(self):
-        if self._last_result and hasattr(self._last_result, 'rows_affected'):
-            return self._last_result.rows_affected
-        return -1
+        return self._rows_affected
     
     def close(self):
         pass
