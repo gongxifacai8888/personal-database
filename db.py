@@ -48,8 +48,6 @@ def get_connection():
                 auth_token=TURSO_TOKEN
             )
             _turso_conn.sync()
-        # 为libsql设置row_factory，使返回结果和sqlite3.Row兼容
-        _turso_conn.row_factory = _dict_factory
         return _turso_conn
     else:
         import sqlite3
@@ -66,6 +64,45 @@ def db_sync():
             _turso_conn.sync()
         except Exception:
             pass
+
+
+def _execute(cursor, sql, params=None):
+    """执行SQL并返回cursor（兼容libsql和sqlite3）"""
+    if params:
+        return cursor.execute(sql, params)
+    return cursor.execute(sql)
+
+
+def _fetchone_dict(cursor):
+    """获取一行结果，返回字典"""
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row
+    if hasattr(row, 'keys'):
+        return dict(row)
+    # libsql返回tuple，需要用cursor.description获取列名
+    if cursor.description:
+        columns = [col[0] for col in cursor.description]
+        return dict(zip(columns, row))
+    return row
+
+
+def _fetchall_dicts(cursor):
+    """获取所有行结果，返回字典列表"""
+    rows = cursor.fetchall()
+    if not rows:
+        return []
+    if isinstance(rows[0], dict):
+        return rows
+    if hasattr(rows[0], 'keys'):
+        return [dict(row) for row in rows]
+    # libsql返回tuple
+    if cursor.description:
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    return list(rows)
 
 
 def init_database() -> None:
@@ -230,7 +267,7 @@ def get_password_hash() -> Optional[str]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT config_value FROM app_config WHERE config_key = ?", ("password_hash",))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return result["config_value"] if result else None
@@ -328,7 +365,7 @@ def get_academic_list(search: str = "", tags: str = "") -> List[Dict]:
     query += " ORDER BY created_at DESC"
     
     cursor.execute(query, params)
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -339,7 +376,7 @@ def get_academic_by_id(academic_id: int) -> Optional[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM academic WHERE id = ?", (academic_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return dict(result) if result else None
@@ -380,7 +417,7 @@ def get_academic_stats() -> Dict:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as count FROM academic")
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return {"total": result["count"] if result else 0}
@@ -451,7 +488,7 @@ def get_skill_list(search: str = "", category: str = "", sort_by: str = "updated
     query += f" ORDER BY {sort_by} DESC"
     
     cursor.execute(query, params)
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -462,7 +499,7 @@ def get_skill_by_id(skill_id: int) -> Optional[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM growth WHERE id = ?", (skill_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return dict(result) if result else None
@@ -481,7 +518,7 @@ def update_skill_progress(skill_id: int, new_progress: float) -> None:
     
     # 获取旧进度
     cursor.execute("SELECT progress FROM growth WHERE id = ?", (skill_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     old_progress = result["progress"] if result else 0
     
     # 更新技能进度
@@ -542,19 +579,19 @@ def get_skill_stats() -> Dict:
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) as total FROM growth")
-    total = cursor.fetchone()["total"]
+    total = _fetchone_dict(cursor)["total"]
     
     cursor.execute("SELECT COUNT(*) as completed FROM growth WHERE progress >= 100")
-    completed = cursor.fetchone()["completed"]
+    completed = _fetchone_dict(cursor)["completed"]
     
     cursor.execute("SELECT COUNT(*) as in_progress FROM growth WHERE progress > 0 AND progress < 100")
-    in_progress = cursor.fetchone()["in_progress"]
+    in_progress = _fetchone_dict(cursor)["in_progress"]
     
     cursor.execute("SELECT COUNT(*) as not_started FROM growth WHERE progress = 0")
-    not_started = cursor.fetchone()["not_started"]
+    not_started = _fetchone_dict(cursor)["not_started"]
     
     cursor.execute("SELECT AVG(progress) as avg_progress FROM growth")
-    avg_result = cursor.fetchone()
+    avg_result = _fetchone_dict(cursor)
     avg_progress = avg_result["avg_progress"] if avg_result and avg_result["avg_progress"] else 0
     
     if not USE_TURSO:
@@ -593,7 +630,7 @@ def get_lowest_progress_skill() -> Optional[Dict]:
     cursor.execute("""
         SELECT * FROM growth WHERE priority = 'P0' ORDER BY progress ASC LIMIT 1
     """)
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return dict(result) if result else None
@@ -665,7 +702,7 @@ def get_resource_list(search: str = "", category: str = "", status: str = "") ->
     query += " ORDER BY created_at DESC"
     
     cursor.execute(query, params)
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -676,7 +713,7 @@ def get_resource_by_id(resource_id: int) -> Optional[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM resource WHERE id = ?", (resource_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return dict(result) if result else None
@@ -718,10 +755,10 @@ def get_resource_stats() -> Dict:
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) as count FROM resource")
-    total = cursor.fetchone()["count"]
+    total = _fetchone_dict(cursor)["count"]
     
     cursor.execute("SELECT COUNT(*) as count FROM resource WHERE status = '已看'")
-    watched = cursor.fetchone()["count"]
+    watched = _fetchone_dict(cursor)["count"]
     
     if not USE_TURSO:
         conn.close()
@@ -782,7 +819,7 @@ def get_learning_materials(skill_name: str = "") -> List[Dict]:
     else:
         cursor.execute("SELECT * FROM learning_materials ORDER BY upload_time DESC")
     
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -793,7 +830,7 @@ def get_material_by_id(material_id: int) -> Optional[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM learning_materials WHERE id = ?", (material_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     return dict(result) if result else None
@@ -829,10 +866,10 @@ def get_materials_stats() -> Dict:
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) as count FROM learning_materials")
-    total = cursor.fetchone()["count"]
+    total = _fetchone_dict(cursor)["count"]
     
     cursor.execute("SELECT SUM(file_size) as total_size FROM learning_materials")
-    size_result = cursor.fetchone()
+    size_result = _fetchone_dict(cursor)
     total_size = size_result["total_size"] if size_result and size_result["total_size"] else 0
     
     if not USE_TURSO:
@@ -853,7 +890,7 @@ def get_material_content(material_id: int) -> Optional[str]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT content_text FROM learning_materials WHERE id = ?", (material_id,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     if not USE_TURSO:
         conn.close()
     if result and result['content_text']:
@@ -880,7 +917,7 @@ def get_recent_material_contents(limit: int = 5) -> List[Dict]:
         ORDER BY upload_time DESC 
         LIMIT ?
     """, (limit,))
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -938,7 +975,7 @@ def get_skill_notes(skill_id: int) -> List[Dict]:
     cursor.execute("""
         SELECT * FROM skill_notes WHERE skill_id = ? ORDER BY created_at DESC
     """, (skill_id,))
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -964,7 +1001,7 @@ def get_progress_history(skill_id: int) -> List[Dict]:
     cursor.execute("""
         SELECT * FROM progress_history WHERE skill_id = ? ORDER BY created_at DESC
     """, (skill_id,))
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -1012,7 +1049,7 @@ def get_recent_activities(limit: int = 10) -> List[Dict]:
         JOIN growth g ON ll.skill_id = g.id
         ORDER BY ll.created_at DESC LIMIT ?
     """, (limit,))
-    for row in cursor.fetchall():
+    for row in _fetchall_dicts(cursor):
         activities.append({
             "type": "study",
             "title": f"学习了 {row['skill_name']}",
@@ -1026,7 +1063,7 @@ def get_recent_activities(limit: int = 10) -> List[Dict]:
         JOIN growth g ON ph.skill_id = g.id
         ORDER BY ph.created_at DESC LIMIT ?
     """, (limit,))
-    for row in cursor.fetchall():
+    for row in _fetchall_dicts(cursor):
         activities.append({
             "type": "progress",
             "title": f"更新 {row['skill_name']} 进度",
@@ -1075,7 +1112,7 @@ def get_achievements() -> List[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM achievements ORDER BY is_unlocked DESC, id ASC")
-    results = [dict(row) for row in cursor.fetchall()]
+    results = _fetchall_dicts(cursor)
     if not USE_TURSO:
         conn.close()
     return results
@@ -1093,7 +1130,7 @@ def unlock_achievement(achievement_key: str) -> bool:
     
     # 检查是否已解锁
     cursor.execute("SELECT is_unlocked FROM achievements WHERE achievement_key = ?", (achievement_key,))
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     
     if result and result["is_unlocked"] == 1:
         if not USE_TURSO:
@@ -1130,7 +1167,7 @@ def check_achievements() -> List[str]:
     
     # 学习达人
     cursor.execute("SELECT SUM(study_minutes) as total FROM learning_log")
-    result = cursor.fetchone()
+    result = _fetchone_dict(cursor)
     total_minutes = result["total"] if result and result["total"] else 0
     if total_minutes >= 60:
         if unlock_achievement("study_60min"):
