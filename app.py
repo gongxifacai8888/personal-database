@@ -18,7 +18,7 @@ from db import (
     get_materials_stats, get_achievements, get_recent_activities,
     check_achievements, get_recent_material_contents,
     get_skill_list, create_skill, create_academic, create_resource,
-    update_skill_progress
+    update_skill_progress, get_connection, db_sync
 )
 
 # 自动填充模拟数据（数据库为空时）
