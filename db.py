@@ -56,14 +56,18 @@ class TursoClient:
             timeout=30
         )
         if not resp.ok:
-            # 打印详细错误信息方便调试
             try:
                 err_data = resp.json()
             except:
-                err_data = resp.text
+                err_data = resp.text[:500]
             raise Exception(f"Turso HTTP {resp.status_code}: {err_data}")
         data = resp.json()
         results = data.get("results", [])
+        # 检查是否有SQL错误
+        for r in results:
+            if r.get("type") == "error":
+                err_msg = r.get("response", {}).get("error", {}).get("message", str(r))
+                raise Exception(f"Turso SQL error: {err_msg}")
         return results
     
     @staticmethod
@@ -72,11 +76,11 @@ class TursoClient:
         if val is None:
             return {"type": "null"}
         elif isinstance(val, bool):
-            return {"type": "integer", "value": 1 if val else 0}
+            return {"type": "integer", "value": "1" if val else "0"}
         elif isinstance(val, int):
-            return {"type": "integer", "value": val}
+            return {"type": "integer", "value": str(val)}
         elif isinstance(val, float):
-            return {"type": "float", "value": val}
+            return {"type": "float", "value": str(val)}
         elif isinstance(val, str):
             return {"type": "text", "value": val}
         elif isinstance(val, bytes):
