@@ -1,29 +1,71 @@
 """
 数据库核心模块
 管理所有表的创建、CRUD操作和统计查询
+支持本地SQLite和Turso云数据库
 """
 
-import sqlite3
 import os
 import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 
-# 获取数据库绝对路径
+# ============ 数据库连接配置 ============
+# 优先使用Turso云数据库（通过环境变量配置）
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "personal_database.db")
+LOCAL_DB_PATH = os.path.join(BASE_DIR, "personal_database.db")
+
+# Turso连接对象（模块级单例）
+_turso_conn = None
+
+def _dict_factory(cursor, row):
+    """自定义row_factory，让查询结果返回字典（兼容dict(row)访问）"""
+    if cursor.description:
+        columns = [col[0] for col in cursor.description]
+        return dict(zip(columns, row))
+    return row
 
 
-def get_connection() -> sqlite3.Connection:
+def get_connection():
     """
     获取数据库连接
-    
-    Returns:
-        sqlite3.Connection: 数据库连接对象
+    Turso模式：使用libsql嵌入式副本，自动同步云数据库
+    本地模式：使用sqlite3
     """
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    global _turso_conn
+    
+    if USE_TURSO:
+        import libsql
+        if _turso_conn is None:
+            import tempfile
+            local_path = os.path.join(tempfile.gettempdir(), "personal_database_turso.db")
+            _turso_conn = libsql.connect(
+                local_path,
+                sync_url=TURSO_URL,
+                auth_token=TURSO_TOKEN
+            )
+            _turso_conn.sync()
+        # 为libsql设置row_factory，使返回结果和sqlite3.Row兼容
+        _turso_conn.row_factory = _dict_factory
+        return _turso_conn
+    else:
+        import sqlite3
+        conn = sqlite3.connect(LOCAL_DB_PATH, check_same_thread=False)
+        conn.row_factory = _dict_factory
+        return conn
+
+
+def db_sync():
+    """同步本地数据到Turso云端（写入操作后调用）"""
+    global _turso_conn
+    if USE_TURSO and _turso_conn is not None:
+        try:
+            _turso_conn.sync()
+        except Exception:
+            pass
 
 
 def init_database() -> None:
@@ -98,7 +140,8 @@ def init_database() -> None:
     try:
         cursor.execute("ALTER TABLE learning_materials ADD COLUMN content_text TEXT")
         conn.commit()
-    except sqlite3.OperationalError:
+        db_sync()
+    except Exception:
         pass  # 字段已存在
     
     # 进度历史表
@@ -162,7 +205,9 @@ def init_database() -> None:
     """)
     
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def hash_password(password: str) -> str:
@@ -186,7 +231,8 @@ def get_password_hash() -> Optional[str]:
     cursor = conn.cursor()
     cursor.execute("SELECT config_value FROM app_config WHERE config_key = ?", ("password_hash",))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return result["config_value"] if result else None
 
 
@@ -201,7 +247,9 @@ def set_password(password: str) -> None:
         ON CONFLICT(config_key) DO UPDATE SET config_value = ?, updated_at = ?
     """, ("password_hash", password_hash, datetime.now(), password_hash, datetime.now()))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def verify_password(password: str) -> bool:
@@ -245,7 +293,9 @@ def create_academic(title: str, authors: str = "", keywords: str = "", abstract:
     """, (title, authors, keywords, abstract, notes, tags, source, publish_date))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -279,7 +329,8 @@ def get_academic_list(search: str = "", tags: str = "") -> List[Dict]:
     
     cursor.execute(query, params)
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -289,7 +340,8 @@ def get_academic_by_id(academic_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM academic WHERE id = ?", (academic_id,))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return dict(result) if result else None
 
 
@@ -307,7 +359,9 @@ def update_academic(academic_id: int, **kwargs) -> None:
     values = list(updates.values()) + [academic_id]
     cursor.execute(f"UPDATE academic SET {set_clause} WHERE id = ?", values)
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def delete_academic(academic_id: int) -> None:
@@ -316,7 +370,9 @@ def delete_academic(academic_id: int) -> None:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM academic WHERE id = ?", (academic_id,))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def get_academic_stats() -> Dict:
@@ -325,7 +381,8 @@ def get_academic_stats() -> Dict:
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as count FROM academic")
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return {"total": result["count"] if result else 0}
 
 
@@ -354,7 +411,9 @@ def create_skill(skill_name: str, category: str = "", target_level: int = 100,
     """, (skill_name, category, target_level, notes, priority, datetime.now().strftime("%Y-%m-%d")))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -393,7 +452,8 @@ def get_skill_list(search: str = "", category: str = "", sort_by: str = "updated
     
     cursor.execute(query, params)
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -403,7 +463,8 @@ def get_skill_by_id(skill_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM growth WHERE id = ?", (skill_id,))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return dict(result) if result else None
 
 
@@ -435,7 +496,9 @@ def update_skill_progress(skill_id: int, new_progress: float) -> None:
     """, (skill_id, old_progress, new_progress, new_progress - old_progress))
     
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def update_skill(skill_id: int, **kwargs) -> None:
@@ -453,7 +516,9 @@ def update_skill(skill_id: int, **kwargs) -> None:
     values = list(updates.values()) + [skill_id]
     cursor.execute(f"UPDATE growth SET {set_clause} WHERE id = ?", values)
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def delete_skill(skill_id: int) -> None:
@@ -466,7 +531,9 @@ def delete_skill(skill_id: int) -> None:
     cursor.execute("DELETE FROM learning_log WHERE skill_id = ?", (skill_id,))
     cursor.execute("DELETE FROM growth WHERE id = ?", (skill_id,))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def get_skill_stats() -> Dict:
@@ -490,7 +557,8 @@ def get_skill_stats() -> Dict:
     avg_result = cursor.fetchone()
     avg_progress = avg_result["avg_progress"] if avg_result and avg_result["avg_progress"] else 0
     
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     
     return {
         "total": total,
@@ -513,7 +581,8 @@ def get_skills_by_priority() -> Dict[str, List[Dict]]:
         """, (priority,))
         result[priority] = [dict(row) for row in cursor.fetchall()]
     
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return result
 
 
@@ -525,7 +594,8 @@ def get_lowest_progress_skill() -> Optional[Dict]:
         SELECT * FROM growth WHERE priority = 'P0' ORDER BY progress ASC LIMIT 1
     """)
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return dict(result) if result else None
 
 
@@ -555,7 +625,9 @@ def create_resource(title: str, category: str = "", url: str = "",
     """, (title, category, url, description, priority, status))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -594,7 +666,8 @@ def get_resource_list(search: str = "", category: str = "", status: str = "") ->
     
     cursor.execute(query, params)
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -604,7 +677,8 @@ def get_resource_by_id(resource_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM resource WHERE id = ?", (resource_id,))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return dict(result) if result else None
 
 
@@ -622,7 +696,9 @@ def update_resource(resource_id: int, **kwargs) -> None:
     values = list(updates.values()) + [resource_id]
     cursor.execute(f"UPDATE resource SET {set_clause} WHERE id = ?", values)
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def delete_resource(resource_id: int) -> None:
@@ -631,7 +707,9 @@ def delete_resource(resource_id: int) -> None:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM resource WHERE id = ?", (resource_id,))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def get_resource_stats() -> Dict:
@@ -645,7 +723,8 @@ def get_resource_stats() -> Dict:
     cursor.execute("SELECT COUNT(*) as count FROM resource WHERE status = '已看'")
     watched = cursor.fetchone()["count"]
     
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return {"total": total, "watched": watched}
 
 
@@ -677,7 +756,9 @@ def create_learning_material(skill_name: str, file_name: str, file_path: str,
     """, (skill_name, file_name, file_path, file_type, file_size, description, content_text))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -702,7 +783,8 @@ def get_learning_materials(skill_name: str = "") -> List[Dict]:
         cursor.execute("SELECT * FROM learning_materials ORDER BY upload_time DESC")
     
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -712,7 +794,8 @@ def get_material_by_id(material_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM learning_materials WHERE id = ?", (material_id,))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return dict(result) if result else None
 
 
@@ -724,7 +807,9 @@ def update_material_position(material_id: int, position: int) -> None:
         UPDATE learning_materials SET last_position = ? WHERE id = ?
     """, (position, material_id))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def delete_learning_material(material_id: int) -> None:
@@ -733,7 +818,9 @@ def delete_learning_material(material_id: int) -> None:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM learning_materials WHERE id = ?", (material_id,))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def get_materials_stats() -> Dict:
@@ -748,7 +835,8 @@ def get_materials_stats() -> Dict:
     size_result = cursor.fetchone()
     total_size = size_result["total_size"] if size_result and size_result["total_size"] else 0
     
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return {"total": total, "total_size": total_size}
 
 
@@ -766,7 +854,8 @@ def get_material_content(material_id: int) -> Optional[str]:
     cursor = conn.cursor()
     cursor.execute("SELECT content_text FROM learning_materials WHERE id = ?", (material_id,))
     result = cursor.fetchone()
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     if result and result['content_text']:
         return result['content_text']
     return None
@@ -792,7 +881,8 @@ def get_recent_material_contents(limit: int = 5) -> List[Dict]:
         LIMIT ?
     """, (limit,))
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -810,7 +900,9 @@ def update_material_content(material_id: int, content_text: str) -> None:
         UPDATE learning_materials SET content_text = ? WHERE id = ?
     """, (content_text, material_id))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 # ============ 技能笔记 CRUD ============
@@ -833,7 +925,9 @@ def create_skill_note(skill_id: int, content: str) -> int:
     """, (skill_id, content))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -845,7 +939,8 @@ def get_skill_notes(skill_id: int) -> List[Dict]:
         SELECT * FROM skill_notes WHERE skill_id = ? ORDER BY created_at DESC
     """, (skill_id,))
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -855,7 +950,9 @@ def delete_skill_note(note_id: int) -> None:
     cursor = conn.cursor()
     cursor.execute("DELETE FROM skill_notes WHERE id = ?", (note_id,))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 # ============ 进度历史 ============
@@ -868,7 +965,8 @@ def get_progress_history(skill_id: int) -> List[Dict]:
         SELECT * FROM progress_history WHERE skill_id = ? ORDER BY created_at DESC
     """, (skill_id,))
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -895,7 +993,9 @@ def create_learning_log(skill_id: int, study_minutes: int, xp_earned: int) -> in
     """, (skill_id, today, study_minutes, xp_earned))
     new_id = cursor.lastrowid
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return new_id
 
 
@@ -936,7 +1036,8 @@ def get_recent_activities(limit: int = 10) -> List[Dict]:
     
     # 按时间排序
     activities.sort(key=lambda x: x["time"], reverse=True)
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return activities[:limit]
 
 
@@ -964,7 +1065,9 @@ def init_achievements() -> None:
         """, (key, name, desc, icon))
     
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
 
 
 def get_achievements() -> List[Dict]:
@@ -973,7 +1076,8 @@ def get_achievements() -> List[Dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM achievements ORDER BY is_unlocked DESC, id ASC")
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return results
 
 
@@ -992,14 +1096,17 @@ def unlock_achievement(achievement_key: str) -> bool:
     result = cursor.fetchone()
     
     if result and result["is_unlocked"] == 1:
-        conn.close()
+        if not USE_TURSO:
+            conn.close()
         return False
     
     cursor.execute("""
         UPDATE achievements SET is_unlocked = 1, unlocked_at = ? WHERE achievement_key = ?
     """, (datetime.now(), achievement_key))
     conn.commit()
-    conn.close()
+    db_sync()
+    if not USE_TURSO:
+        conn.close()
     return True
 
 
@@ -1046,5 +1153,6 @@ def check_achievements() -> List[str]:
             if unlock_achievement("all_p0_done"):
                 unlocked.append("优先完成")
     
-    conn.close()
+    if not USE_TURSO:
+        conn.close()
     return unlocked
