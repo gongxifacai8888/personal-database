@@ -42,22 +42,47 @@ class TursoClient:
     def _execute_sql(self, sql, params=None):
         """通过HTTP API执行SQL"""
         import requests
-        stmts = [{"sql": sql}]
+        stmt = {"sql": sql}
         if params:
-            stmts[0]["args"] = list(params)
+            # Turso HTTP API需要的参数格式
+            stmt["args"] = [self._to_turso_value(p) for p in params]
         resp = requests.post(
             f"{self._url}/v2/pipeline",
             headers={
                 "Authorization": f"Bearer {self._auth_token}",
                 "Content-Type": "application/json"
             },
-            json={"requests": [{"type": "execute", "stmt": s} for s in stmts] + [{"type": "close"}]},
+            json={"requests": [{"type": "execute", "stmt": stmt}] + [{"type": "close"}]},
             timeout=30
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            # 打印详细错误信息方便调试
+            try:
+                err_data = resp.json()
+            except:
+                err_data = resp.text
+            raise Exception(f"Turso HTTP {resp.status_code}: {err_data}")
         data = resp.json()
         results = data.get("results", [])
         return results
+    
+    @staticmethod
+    def _to_turso_value(val):
+        """将Python值转为Turso HTTP API格式"""
+        if val is None:
+            return {"type": "null"}
+        elif isinstance(val, bool):
+            return {"type": "integer", "value": 1 if val else 0}
+        elif isinstance(val, int):
+            return {"type": "integer", "value": val}
+        elif isinstance(val, float):
+            return {"type": "float", "value": val}
+        elif isinstance(val, str):
+            return {"type": "text", "value": val}
+        elif isinstance(val, bytes):
+            return {"type": "blob", "value": val.hex()}
+        else:
+            return {"type": "text", "value": str(val)}
 
 
 class TursoCursor:
